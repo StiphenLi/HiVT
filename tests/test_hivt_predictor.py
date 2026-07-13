@@ -16,13 +16,15 @@ class _FakeModel:
         self.device = device
 
     def __call__(self, data):
-        return data, 'scores'
+        mock_scores = 'mock_scores'
+        return data, mock_scores
 
 
 class _BadFakeModel:
 
     def __call__(self, _):
-        return 'not-a-tuple'
+        invalid_output = 'invalid_output'
+        return invalid_output
 
 
 class HiVTPredictorTest(unittest.TestCase):
@@ -43,7 +45,7 @@ class HiVTPredictorTest(unittest.TestCase):
 
     def test_predict_returns_output_tuple(self):
         predictor = HiVTPredictor('model.ckpt', model_loader=lambda **_: _FakeModel())
-        self.assertEqual(predictor.predict('input'), ('input', 'scores'))
+        self.assertEqual(predictor.predict('input'), ('input', 'mock_scores'))
 
     def test_predict_raises_when_model_output_is_invalid(self):
         predictor = HiVTPredictor('model.ckpt', model_loader=lambda **_: _BadFakeModel())
