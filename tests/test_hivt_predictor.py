@@ -16,8 +16,8 @@ class _FakeModel:
         self.device = device
 
     def __call__(self, data):
-        mock_scores = 'mock_scores'
-        return data, mock_scores
+        mock_pi = 'mock_pi'
+        return data, mock_pi
 
 
 class _BadFakeModel:
@@ -45,12 +45,16 @@ class HiVTPredictorTest(unittest.TestCase):
 
     def test_predict_returns_output_tuple(self):
         predictor = HiVTPredictor('model.ckpt', model_loader=lambda **_: _FakeModel())
-        self.assertEqual(predictor.predict('input'), ('input', 'mock_scores'))
+        self.assertEqual(predictor.predict('input'), ('input', 'mock_pi'))
 
     def test_predict_raises_when_model_output_is_invalid(self):
         predictor = HiVTPredictor('model.ckpt', model_loader=lambda **_: _BadFakeModel())
         with self.assertRaises(ValueError):
             predictor.predict('input')
+
+    def test_predict_batch_returns_outputs(self):
+        predictor = HiVTPredictor('model.ckpt', model_loader=lambda **_: _FakeModel())
+        self.assertEqual(predictor.predict_batch(['a', 'b']), [('a', 'mock_pi'), ('b', 'mock_pi')])
 
     def test_rejects_empty_checkpoint_path(self):
         with self.assertRaises(ValueError):

@@ -23,21 +23,31 @@ class HiVTPredictor:
             self.model.eval()
         if device is not None and hasattr(self.model, 'to'):
             self.model.to(device)
-
-    def predict(self, data: Any) -> Tuple[Any, Any]:
-        context = nullcontext()
         try:
             import torch
-            context = torch.no_grad()
+            self._torch = torch
         except ImportError:
-            pass
+            self._torch = None
 
-        with context:
+    def predict(self, data: Any) -> Tuple[Any, Any]:
+        with self._prediction_context():
             outputs = self.model(data)
+        return self._validate_outputs(outputs)
 
+    def _prediction_context(self):
+        if self._torch is None:
+            return nullcontext()
+        return self._torch.no_grad()
+
+    @staticmethod
+    def _validate_outputs(outputs: Any) -> Tuple[Any, Any]:
         if not isinstance(outputs, tuple) or len(outputs) != 2:
             raise ValueError('HiVT model must return a tuple: (y_hat, pi)')
         return outputs
 
     def predict_batch(self, batch: Iterable[Any]) -> List[Tuple[Any, Any]]:
-        return [self.predict(data) for data in batch]
+        results = []
+        with self._prediction_context():
+            for data in batch:
+                results.append(self._validate_outputs(self.model(data)))
+        return results
