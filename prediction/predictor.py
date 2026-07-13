@@ -103,7 +103,8 @@ class HiVTPredictor:
         with torch.no_grad():
             y_hat, pi = self.model(data)
 
-        # y_hat: [F, N, H, 4]  (loc + scale when uncertain=True)
+        # y_hat: [num_modes, N, H, 4]  (loc + scale when uncertain=True)
+        # pi:    [N, num_modes]
         # Return only the location component (first 2 channels).
         return y_hat[..., :2], pi
 
@@ -127,9 +128,9 @@ class HiVTPredictor:
             Unnormalised mode scores for the focal agent.
         """
         y_hat, pi = self.predict(data)
-        # y_hat: [F, N, H, 2], pi: [N, F]
+        # y_hat: [num_modes, N, H, 2], pi: [N, num_modes]
         agent_index = data['agent_index']
-        # Extract the focal agent: [F, num_graphs, H, 2] → [num_graphs, F, H, 2]
+        # Extract the focal agent: [num_modes, num_graphs, H, 2] → [num_graphs, num_modes, H, 2]
         y_hat_agent = y_hat[:, agent_index, :, :].permute(1, 0, 2, 3)
         pi_agent = pi[agent_index]
         return y_hat_agent, pi_agent

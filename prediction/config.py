@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 
 @dataclass
@@ -75,21 +75,4 @@ class HiVTConfig:
 
     def to_dict(self) -> dict:
         """Return a plain dictionary of all configuration values."""
-        return {
-            'historical_steps': self.historical_steps,
-            'future_steps': self.future_steps,
-            'num_modes': self.num_modes,
-            'node_dim': self.node_dim,
-            'edge_dim': self.edge_dim,
-            'embed_dim': self.embed_dim,
-            'num_heads': self.num_heads,
-            'dropout': self.dropout,
-            'num_temporal_layers': self.num_temporal_layers,
-            'num_global_layers': self.num_global_layers,
-            'local_radius': self.local_radius,
-            'rotate': self.rotate,
-            'parallel': self.parallel,
-            'lr': self.lr,
-            'weight_decay': self.weight_decay,
-            'T_max': self.T_max,
-        }
+        return asdict(self)
