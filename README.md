@@ -63,6 +63,17 @@ To evaluate the prediction performance:
 python eval.py --root /path/to/dataset_root/ --batch_size 32 --ckpt_path /path/to/your_checkpoint.ckpt
 ```
 
+## Prediction Integration
+
+If your existing system expects a model under a `prediction/` package, this repository now provides a lightweight wrapper:
+```python
+from prediction import HiVTPredictor
+
+predictor = HiVTPredictor(checkpoint_path='/path/to/your_checkpoint.ckpt')
+y_hat, pi = predictor.predict(data)
+```
+The wrapper loads a HiVT checkpoint and returns the native HiVT outputs `(y_hat, pi)`.
+
 ## Pretrained Models
 
 We provide the pretrained HiVT-64 and HiVT-128 in [checkpoints/](checkpoints). You can evaluate the pretrained models using the aforementioned evaluation command, or have a look at the training process via TensorBoard:
@@ -101,4 +112,3 @@ If you found this repository useful, please consider citing our work:
 ## License
 
 This repository is licensed under [Apache 2.0](LICENSE).
-
