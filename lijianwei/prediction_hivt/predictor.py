@@ -1,14 +1,14 @@
 """
-HiVT-based trajectory prediction module.
+HiVT-based trajectory prediction module (prediction_hivt).
 
-This module replaces the former QCNet predictor and exposes a single
-``HiVTPredictionModule`` class that mirrors the public API of the
-previous QCNet-based predictor while delegating all inference to HiVT.
+This module provides a HiVT (Hierarchical Vector Transformer) predictor
+that exposes the same public interface as the QCNet-based ``prediction``
+module, allowing a drop-in switch between the two backends.
 
 Typical usage::
 
-    from lijianwei.prediction import HiVTPredictionModule
-    from lijianwei.prediction.config import PredictionConfig
+    from lijianwei.prediction_hivt import HiVTPredictionModule
+    from lijianwei.prediction_hivt.config import PredictionConfig
 
     cfg = PredictionConfig()
     cfg.inference.checkpoint_path = 'checkpoints/HiVT-128/checkpoints/epoch=63-step=411903.ckpt'
@@ -17,16 +17,27 @@ Typical usage::
     predictor = HiVTPredictionModule(cfg)
 
     # From a pre-processed TemporalData object
-    predictions = predictor.predict(data)
+    result = predictor.predict(data)
 
     # From a raw Argoverse-style DataFrame
-    predictions = predictor.predict_from_df(df)
+    result = predictor.predict_from_df(df)
+
+    # From raw numpy position arrays
+    result = predictor.predict_from_arrays(positions, object_types, city)
+
+Each call returns a dict::
+
+    {
+        'trajectories':   np.ndarray  # [num_modes, future_steps, 2]   (x, y)
+        'probabilities':  np.ndarray  # [num_modes]
+        'uncertainties':  np.ndarray  # [num_modes, future_steps, 2]  (only when enabled)
+    }
 """
 from __future__ import annotations
 
 import os
 import sys
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -35,8 +46,8 @@ import torch.nn.functional as F
 from torch_geometric.data import Batch, Data
 
 # ---------------------------------------------------------------------------
-# Ensure the repository root is on sys.path so that the top-level packages
-# (models, datasets, utils, …) are importable regardless of working directory.
+# Ensure the repository root is on sys.path so that top-level packages
+# (models, datasets, utils, …) are importable regardless of cwd.
 # ---------------------------------------------------------------------------
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 if _REPO_ROOT not in sys.path:
@@ -51,13 +62,13 @@ from .data_utils import arrays_to_temporal_data, df_to_temporal_data
 
 class HiVTPredictionModule:
     """
-    Drop-in replacement for the QCNet prediction module based on HiVT.
+    HiVT predictor with the same public interface as the QCNet predictor.
 
     Parameters
     ----------
     config:
-        ``PredictionConfig`` instance.  See
-        ``lijianwei.prediction.config.prediction_config_040702`` for all
+        ``PredictionConfig`` instance.  Defaults to HiVT-128 settings.
+        See ``prediction_hivt.config.prediction_config_040702`` for all
         available options.
     """
 
@@ -73,7 +84,7 @@ class HiVTPredictionModule:
             self._load_checkpoint(config.inference.checkpoint_path)
 
     # ------------------------------------------------------------------
-    # Public interface
+    # Public interface (mirrors QCNet predictor)
     # ------------------------------------------------------------------
 
     def load_checkpoint(self, checkpoint_path: str) -> None:
@@ -97,22 +108,20 @@ class HiVTPredictionModule:
         -------
         dict with keys:
 
-        ``'trajectories'`` — ``np.ndarray`` of shape ``(num_modes, future_steps, 2)``
-            Predicted (x, y) positions for the *focal agent* (AGENT) in the
-            coordinate frame centred on the AV at the last historical step.
+        ``'trajectories'`` — ``np.ndarray`` shape ``(num_modes, future_steps, 2)``
+            Predicted (x, y) positions for the focal agent (AGENT) in the
+            coordinate frame centred on AV at the last historical step.
 
-        ``'probabilities'`` — ``np.ndarray`` of shape ``(num_modes,)``
+        ``'probabilities'`` — ``np.ndarray`` shape ``(num_modes,)``
             Softmax mode probabilities.
 
-        ``'uncertainties'`` — ``np.ndarray`` of shape ``(num_modes, future_steps, 2)``
-            Predicted Laplace scale parameters (only when
-            ``config.inference.return_uncertainties`` is ``True``,
-            otherwise an empty array).
+        ``'uncertainties'`` — ``np.ndarray`` shape ``(num_modes, future_steps, 2)``
+            Laplace scale parameters.  Empty array when
+            ``config.inference.return_uncertainties`` is ``False``.
         """
         model = self._require_model()
         model.eval()
 
-        # Move data to the target device
         data = data.to(self._device)
 
         with torch.no_grad():
@@ -120,7 +129,7 @@ class HiVTPredictionModule:
 
         agent_index = int(data['agent_index'])
 
-        # y_hat: [F, N, future_steps, 4]  (x, y, scale_x, scale_y)
+        # y_hat[..., :2] = predicted (x, y); y_hat[..., 2:] = Laplace scales
         trajectories = y_hat[:, agent_index, :, :2].cpu().numpy()   # [F, future_steps, 2]
         if self.config.inference.return_uncertainties:
             uncertainties = y_hat[:, agent_index, :, 2:].cpu().numpy()  # [F, future_steps, 2]
@@ -157,12 +166,11 @@ class HiVTPredictionModule:
         batch = Batch.from_data_list(data_list).to(self._device)
 
         with torch.no_grad():
-            y_hat, pi = model(batch)  # [F, N_total, H, 4], [N_total, F]
+            y_hat, pi = model(batch)  # [F, N_total, future_steps, 4], [N_total, F]
 
         results = []
-        # Recover per-scenario slices using batch.batch and agent_index
         agent_indices = batch['agent_index']
-        for i, data in enumerate(data_list):
+        for i in range(len(data_list)):
             agent_global_idx = int(agent_indices[i])
             trajectories = y_hat[:, agent_global_idx, :, :2].cpu().numpy()
             if self.config.inference.return_uncertainties:
@@ -183,14 +191,13 @@ class HiVTPredictionModule:
         am=None,
     ) -> Dict[str, np.ndarray]:
         """
-        Convenience wrapper: accept a raw Argoverse CSV DataFrame and return
-        predictions.
+        Accept a raw Argoverse CSV DataFrame and return predictions.
 
         Parameters
         ----------
         df:
-            Raw Argoverse scenario DataFrame (TIMESTAMP, TRACK_ID,
-            OBJECT_TYPE, X, Y, CITY_NAME columns).
+            Raw Argoverse scenario DataFrame (columns: TIMESTAMP, TRACK_ID,
+            OBJECT_TYPE, X, Y, CITY_NAME).
         am:
             Optional ``ArgoverseMap`` instance for lane features.
 
@@ -198,8 +205,12 @@ class HiVTPredictionModule:
         -------
         Prediction dict — same as :meth:`predict`.
         """
-        local_radius = self.config.model.local_radius
-        data = df_to_temporal_data(df, local_radius=local_radius, split='val', am=am)
+        data = df_to_temporal_data(
+            df,
+            local_radius=self.config.model.local_radius,
+            split='val',
+            am=am,
+        )
         return self.predict(data)
 
     def predict_from_arrays(
@@ -211,18 +222,18 @@ class HiVTPredictionModule:
         am=None,
     ) -> Dict[str, np.ndarray]:
         """
-        Convenience wrapper: accept raw numpy position arrays and return
-        predictions.
+        Accept raw numpy position arrays and return predictions.
 
         Parameters
         ----------
         positions:
-            Float array of shape ``(N, T, 2)`` with ``(x, y)`` world coordinates.
-            Missing observations should be filled with ``np.nan``.
+            Float array of shape ``(N, T, 2)`` with ``(x, y)`` world
+            coordinates.  Missing observations should be ``np.nan``.
         object_types:
             List of ``N`` strings (``'AV'``, ``'AGENT'``, ``'OTHERS'``).
+            Must contain exactly one ``'AV'`` entry.
         city:
-            Argoverse city identifier (e.g. ``'MIA'``).
+            Argoverse city identifier (e.g. ``'MIA'``, ``'PIT'``).
         timestamps:
             Optional 1-D float array of length ``T``.
         am:
@@ -232,11 +243,12 @@ class HiVTPredictionModule:
         -------
         Prediction dict — same as :meth:`predict`.
         """
-        local_radius = self.config.model.local_radius
         data = arrays_to_temporal_data(
-            positions, object_types, city,
+            positions,
+            object_types,
+            city,
             timestamps=timestamps,
-            local_radius=local_radius,
+            local_radius=self.config.model.local_radius,
             am=am,
         )
         return self.predict(data)
@@ -246,10 +258,7 @@ class HiVTPredictionModule:
     # ------------------------------------------------------------------
 
     def build_model(self) -> HiVT:
-        """
-        Instantiate a fresh (randomly-initialised) HiVT model from the
-        current ``config.model`` settings.
-        """
+        """Instantiate a fresh (randomly-initialised) HiVT from the config."""
         model = HiVT(**self.config.to_hivt_kwargs())
         model.to(self._device)
         self._model = model
@@ -260,7 +269,6 @@ class HiVTPredictionModule:
     # ------------------------------------------------------------------
 
     def _load_checkpoint(self, checkpoint_path: str) -> None:
-        """Load HiVT weights from a PyTorch Lightning checkpoint."""
         if not os.path.isfile(checkpoint_path):
             raise FileNotFoundError(
                 f'HiVT checkpoint not found: {checkpoint_path}'
@@ -268,8 +276,6 @@ class HiVTPredictionModule:
         model = HiVT.load_from_checkpoint(
             checkpoint_path=checkpoint_path,
             map_location=self._device,
-            # Allow the saved hparams to override only the parallel flag
-            # (avoids issues when checkpoint was saved with parallel=True).
             parallel=self.config.model.parallel,
         )
         model.to(self._device)
@@ -279,8 +285,7 @@ class HiVTPredictionModule:
     def _require_model(self) -> HiVT:
         if self._model is None:
             raise RuntimeError(
-                'No model loaded.  Either pass a checkpoint_path in the '
-                'InferenceConfig or call build_model() / load_checkpoint() '
-                'before calling predict().'
+                'No model loaded.  Pass a checkpoint_path in InferenceConfig '
+                'or call build_model() / load_checkpoint() before predict().'
             )
         return self._model
