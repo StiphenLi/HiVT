@@ -68,7 +68,7 @@ class HiVTPredictionModule:
     ----------
     config:
         ``PredictionConfig`` instance.  Defaults to HiVT-128 settings.
-        See ``prediction_hivt.config.prediction_config_040702`` for all
+        See ``lijianwei.prediction_hivt.config.prediction_config_040702`` for all
         available options.
     """
 

@@ -142,7 +142,7 @@ class PredictionConfig:
 
     Usage::
 
-        from lijianwei.prediction.config import PredictionConfig
+        from lijianwei.prediction_hivt.config import PredictionConfig
 
         cfg = PredictionConfig()
         cfg.model.embed_dim = 64          # switch to HiVT-64
