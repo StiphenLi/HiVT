@@ -219,11 +219,11 @@ def _process_scenario(
 
     return {
         'x': x[:, :20],                     # [N, 20, 2]
-        'positions': positions,              # [N, 50, 2]
+        'positions': positions,              # [N, historical_steps + future_steps, 2]
         'edge_index': edge_index,            # [2, N*(N-1)]
         'y': y,                              # [N, 30, 2] or None
         'num_nodes': num_nodes,
-        'padding_mask': padding_mask,        # [N, 50]
+        'padding_mask': padding_mask,        # [N, historical_steps + future_steps]
         'bos_mask': bos_mask,               # [N, 20]
         'rotate_angles': rotate_angles,      # [N]
         'lane_vectors': lane_vectors,        # [L, 2]

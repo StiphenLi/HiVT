@@ -116,14 +116,14 @@ class HiVTPredictionModule:
         data = data.to(self._device)
 
         with torch.no_grad():
-            y_hat, pi = model(data)  # [F, N, H, 4], [N, F]
+            y_hat, pi = model(data)  # [F, N, future_steps, 4], [N, F]
 
         agent_index = int(data['agent_index'])
 
         # y_hat: [F, N, future_steps, 4]  (x, y, scale_x, scale_y)
-        trajectories = y_hat[:, agent_index, :, :2].cpu().numpy()   # [F, H, 2]
+        trajectories = y_hat[:, agent_index, :, :2].cpu().numpy()   # [F, future_steps, 2]
         if self.config.inference.return_uncertainties:
-            uncertainties = y_hat[:, agent_index, :, 2:].cpu().numpy()  # [F, H, 2]
+            uncertainties = y_hat[:, agent_index, :, 2:].cpu().numpy()  # [F, future_steps, 2]
         else:
             uncertainties = np.empty(0)
 
